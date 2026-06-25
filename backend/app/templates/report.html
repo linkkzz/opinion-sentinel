@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <style>
+    @page { size: A4; margin: 24mm 20mm; @bottom-center { content: "第 " counter(page) " 页"; color: #64748b; } }
+    body { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color: #172033; line-height: 1.85; font-size: 12px; }
+    .cover { height: 235mm; display: flex; flex-direction: column; align-items: center; justify-content: center; page-break-after: always; }
+    .brand { color: #1478ff; letter-spacing: 5px; font-size: 15px; }
+    h1 { font-size: 30px; text-align: center; margin: 28px 0; color: #092759; }
+    .meta { color: #64748b; text-align: center; }
+    .badge { display: inline-block; background: #e9f3ff; color: #1267d6; padding: 5px 12px; border-radius: 16px; }
+    .content p { margin: 5px 0; white-space: pre-wrap; }
+    .content p:empty { height: 8px; }
+    .header { border-bottom: 2px solid #1478ff; padding-bottom: 8px; margin-bottom: 18px; color: #092759; }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <div class="brand">舆情智析平台</div>
+    <h1>{{ task.name }}<br>舆情分析报告</h1>
+    <div class="meta">
+      <p><span class="badge">{% if report.is_manually_edited %}AI生成 · 人工已审核{% else %}AI智能生成{% endif %}</span></p>
+      <p>报告版本：V{{ report.version_no }}</p>
+      <p>生成时间：{{ report.created_at.strftime('%Y年%m月%d日 %H:%M') }}</p>
+    </div>
+  </section>
+  <main class="content">
+    <h2 class="header">报告正文</h2>
+    {% for paragraph in paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
+  </main>
+</body>
+</html>
