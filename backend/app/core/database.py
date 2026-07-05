@@ -28,19 +28,28 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 def apply_lightweight_migrations() -> None:
     """为比赛阶段的小规模部署补充新增列，避免每次改字段都要求重建数据库。"""
     inspector = inspect(engine)
-    if "source_items" not in inspector.get_table_names():
-        return
-    existing = {column["name"] for column in inspector.get_columns("source_items")}
-    additions = {
-        "like_count": "INTEGER NOT NULL DEFAULT 0",
-        "comment_count": "INTEGER NOT NULL DEFAULT 0",
-        "share_count": "INTEGER NOT NULL DEFAULT 0",
-        "view_count": "INTEGER NOT NULL DEFAULT 0",
+    tables = set(inspector.get_table_names())
+    migrations = {
+        "source_items": {
+            "like_count": "INTEGER NOT NULL DEFAULT 0",
+            "comment_count": "INTEGER NOT NULL DEFAULT 0",
+            "share_count": "INTEGER NOT NULL DEFAULT 0",
+            "view_count": "INTEGER NOT NULL DEFAULT 0",
+        },
+        "tasks": {
+            "collection_enabled": "BOOLEAN NOT NULL DEFAULT 1",
+            "collection_state": "VARCHAR(32) NOT NULL DEFAULT 'idle'",
+            "collection_interval_seconds": "INTEGER NOT NULL DEFAULT 300",
+        },
     }
     with engine.begin() as connection:
-        for name, definition in additions.items():
-            if name not in existing:
-                connection.execute(text(f"ALTER TABLE source_items ADD COLUMN {name} {definition}"))
+        for table, additions in migrations.items():
+            if table not in tables:
+                continue
+            existing = {column["name"] for column in inspector.get_columns(table)}
+            for name, definition in additions.items():
+                if name not in existing:
+                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
 
 
 def get_db() -> Generator[Session, None, None]:

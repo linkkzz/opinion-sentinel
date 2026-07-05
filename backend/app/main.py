@@ -5,10 +5,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import items, reports, strategies, tasks
+from app.api import accounts, collection, items, reports, strategies, tasks
 from app.core.config import settings
 from app.core.database import Base, apply_lightweight_migrations, engine
+from app.collection.worker import collection_loop
 from app.services.analysis_worker import analysis_loop
+from app.services.cookie_refresher import cookie_refresh_loop
 
 
 @asynccontextmanager
@@ -18,9 +20,13 @@ async def lifespan(_: FastAPI):
     apply_lightweight_migrations()
     stop_event = asyncio.Event()
     worker = asyncio.create_task(analysis_loop(stop_event))
+    refresher = asyncio.create_task(cookie_refresh_loop(stop_event))
+    collector = asyncio.create_task(collection_loop(stop_event))
     yield
     stop_event.set()
     await worker
+    await refresher
+    await collector
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
@@ -32,6 +38,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(tasks.router, prefix=settings.api_prefix)
+app.include_router(collection.router, prefix=settings.api_prefix)
+app.include_router(collection.global_router, prefix=settings.api_prefix)
+app.include_router(accounts.router, prefix=settings.api_prefix)
 app.include_router(items.router, prefix=settings.api_prefix)
 app.include_router(strategies.router, prefix=settings.api_prefix)
 app.include_router(reports.router, prefix=settings.api_prefix)

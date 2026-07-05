@@ -14,6 +14,9 @@ RUN apt-get update \
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install -r requirements.txt
 
+# Playwright 浏览器（用于采集账号扫码登录 + Cookie 按需刷新）
+RUN python -m playwright install chromium --with-deps
+
 COPY backend/app ./app
 
 EXPOSE 8000

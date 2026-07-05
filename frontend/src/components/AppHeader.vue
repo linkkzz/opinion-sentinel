@@ -11,7 +11,10 @@ defineProps<{ mode: 'admin' | 'dashboard'; title?: string }>()
     <div v-if="title" class="header-title">{{ title }}</div>
     <nav>
       <router-link v-if="mode === 'dashboard'" to="/dashboard" class="active">任务总览</router-link>
-      <router-link v-if="mode === 'admin'" to="/admin" class="active">任务管理</router-link>
+      <template v-if="mode === 'admin'">
+        <router-link to="/admin" class="active">任务管理</router-link>
+        <router-link to="/admin/accounts">采集中心</router-link>
+      </template>
       <router-link to="/" class="portal-exit">退出当前入口</router-link>
     </nav>
   </header>
