@@ -6,6 +6,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.collection.repository import enqueue_task_now
 from app.models import AnalysisRevision, SourceItem, Task
 from app.schemas import TaskCreate, TaskRead, TaskUpdate
 
@@ -21,6 +22,9 @@ def list_tasks(db: Session = Depends(get_db)):
 def create_task(payload: TaskCreate, db: Session = Depends(get_db)):
     task = Task(**payload.model_dump())
     db.add(task)
+    db.flush()
+    if task.collection_enabled and task.status == "running":
+        enqueue_task_now(db, task)
     db.commit()
     db.refresh(task)
     return task
@@ -39,10 +43,16 @@ def update_task(task_id: int, payload: TaskUpdate, db: Session = Depends(get_db)
     task = db.get(Task, task_id)
     if not task:
         raise HTTPException(404, "任务不存在")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    for key, value in changes.items():
         setattr(task, key, value)
     if task.start_time and task.end_time and task.start_time > task.end_time:
         raise HTTPException(422, "开始时间不能晚于结束时间")
+    if "collection_enabled" in changes:
+        task.collection_state = "idle" if task.collection_enabled and task.status == "running" else "stopped"
+    elif {"keywords", "platforms", "start_time", "end_time", "collection_interval_seconds"} & set(changes):
+        if task.collection_enabled and task.status == "running" and task.collection_state != "paused":
+            task.collection_state = "idle"
     db.commit()
     db.refresh(task)
     return task
@@ -56,6 +66,7 @@ def complete_task(task_id: int, db: Session = Depends(get_db)):
     task.status = "completed"
     task.analysis_enabled = False
     task.analysis_state = "stopped"
+    task.collection_state = "stopped"
     db.commit()
     db.refresh(task)
     return task
@@ -68,6 +79,7 @@ def reopen_task(task_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "任务不存在")
     task.status = "running"
     task.analysis_state = "paused"
+    task.collection_state = "idle" if task.collection_enabled else "stopped"
     db.commit()
     db.refresh(task)
     return task

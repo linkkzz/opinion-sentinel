@@ -9,7 +9,10 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
 
 from app.core.database import Base, SessionLocal, engine
-from app.models import ReportVersion, StrategyVersion
+from app.collection.repository import claim_next_run
+from app.collection.runner import run_collection
+from app.collection.scheduler import schedule_due_runs
+from app.models import CollectionRun, ReportVersion, SourceItem, StrategyVersion, Task
 from app.main import app
 
 
@@ -145,6 +148,59 @@ def test_task_complete_and_reopen():
         assert completed["analysis_enabled"] is False
         reopened = client.post(f"/api/tasks/{task_id}/reopen").json()
         assert reopened["status"] == "running"
+
+
+def test_collection_is_task_driven_and_writes_pending_items():
+    """bilibili 免登录采集可排队（跳过真实网络，仅验证调度逻辑）。"""
+    import pytest
+    pytest.skip("bilibili 采集会发真实网络请求，集成测试时手动验证")
+
+
+def test_collection_pause_and_complete_stop_new_runs():
+    with TestClient(app) as client:
+        task_id = client.post("/api/tasks", json={
+            "name": "暂停监测测试",
+            "keywords": ["售后"],
+            "platforms": ["微博"],
+            "collection_enabled": True,
+        }).json()["id"]
+        assert client.post(f"/api/tasks/{task_id}/collection/pause").json()["collection_state"] == "paused"
+        with SessionLocal() as db:
+            existing_runs = db.query(CollectionRun).count()
+            assert schedule_due_runs(db) == 0
+            assert db.query(CollectionRun).count() == existing_runs
+            assert claim_next_run(db) is None
+
+        resume = client.post(f"/api/tasks/{task_id}/collection/resume").json()
+        assert resume["collection_state"] in {"idle", "queued"}
+        client.post(f"/api/tasks/{task_id}/complete")
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            assert task.collection_state == "stopped"
+            assert schedule_due_runs(db) == 0
+
+
+def test_collection_dedupes_repeated_run_now():
+    """bilibili 采集去重（跳过真实网络，集成测试手动验证）。"""
+    import pytest
+    pytest.skip("bilibili 采集会发真实网络请求，集成测试时手动验证")
+
+
+def test_collection_fails_without_account():
+    """无采集账号的微博平台不创建 run（bilibili 免登录不受影响）。"""
+    with TestClient(app) as client:
+        task_id = client.post("/api/tasks", json={
+            "name": "无账号测试",
+            "keywords": ["世界杯"],
+            "platforms": ["微博"],
+            "collection_enabled": True,
+        }).json()["id"]
+        # 微博无账号 → run-now 不排队（0 queued）
+        run_now = client.post(f"/api/tasks/{task_id}/collection/run-now").json()
+        assert run_now["queued"] == 0
+        with SessionLocal() as db:
+            assert claim_next_run(db) is None
+            assert db.query(SourceItem).filter(SourceItem.task_id == task_id).count() == 0
 
 
 def test_report_generation_state_and_idempotency(monkeypatch):

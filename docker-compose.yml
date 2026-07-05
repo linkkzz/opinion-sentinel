@@ -64,8 +64,14 @@ services:
       STORAGE_ROOT: /data/storage
       ANALYSIS_POLL_SECONDS: 2
       AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-600}
+      COLLECTION_LOGIN_HEADLESS: ${COLLECTION_LOGIN_HEADLESS:-true}
+      COLLECTION_LOGIN_TIMEOUT: ${COLLECTION_LOGIN_TIMEOUT:-180}
+      COLLECTION_REQUEST_SLEEP: ${COLLECTION_REQUEST_SLEEP:-2}
+      COLLECTION_COOKIE_REFRESH_INTERVAL: ${COLLECTION_COOKIE_REFRESH_INTERVAL:-30}
+      COLLECTION_BROWSER_DATA_DIR: /data/browser_data
     volumes:
       - media_data:/data/storage
+      - browser_data:/data/browser_data
     depends_on:
       mysql:
         condition: service_healthy
@@ -77,6 +83,30 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+
+  collector:
+    build:
+      context: .
+      dockerfile: backend/collector.Dockerfile
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      DATABASE_URL: ""
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: opinion
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: opinion_sentinel
+      STORAGE_ROOT: /data/storage
+      COLLECTION_POLL_SECONDS: ${COLLECTION_POLL_SECONDS:-5}
+      COLLECTION_DEFAULT_INTERVAL_SECONDS: ${COLLECTION_DEFAULT_INTERVAL_SECONDS:-300}
+      COLLECTION_BATCH_SIZE: ${COLLECTION_BATCH_SIZE:-20}
+      COLLECTION_REQUEST_SLEEP: ${COLLECTION_REQUEST_SLEEP:-2}
+    volumes:
+      - media_data:/data/storage
+    depends_on:
+      mysql:
+        condition: service_healthy
 
   web:
     build:
@@ -90,8 +120,11 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      collector:
+        condition: service_started
 
 volumes:
   mysql_data:
   media_data:
+  browser_data:
   ollama_data:

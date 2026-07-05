@@ -4,12 +4,13 @@ import { useRoute } from 'vue-router'
 import AppHeader from '../../components/AppHeader.vue'
 import ChartPanel from '../../components/ChartPanel.vue'
 import TaskConfigModal from '../../components/TaskConfigModal.vue'
-import { api, getItems, getTask, type SourceItem, type Task } from '../../api'
+import { api, getCollectionFeed, getCollectionStatus, getTask, type CollectionStatus, type SourceItem, type Task } from '../../api'
 
 const id = Number(useRoute().params.id)
 const task = ref<Task>()
 const stats = ref<any>({ risks:{}, sentiments:{}, platforms:{}, engagement:{}, trend:[], risk_trend:[], sentiment_trend:[], topics:[] })
 const items = ref<SourceItem[]>([])
+const collectionStatus = ref<CollectionStatus>()
 const strategy = ref<any>()
 const eligibility = ref<any>({ eligible: false, reason: '正在检查研判数据…' })
 const reports = ref<any[]>([])
@@ -22,11 +23,29 @@ const showReportDetail = ref(false)
 const showTaskConfig = ref(false)
 let refreshTimer: number | undefined
 const latestReport = computed(() => reports.value.find(value => value.generation_status === 'completed'))
+const collectionScreenStateText = computed(() => ({ idle:'等待任务', queued:'排队中', collecting:'采集中', waiting:'等待下一轮', paused:'已暂停', error:'异常', stopped:'已停止' }[collectionStatus.value?.state || 'idle'] || '等待任务'))
 const feedItems = computed(() => items.value.slice(0, 20))
 const scrollingFeedItems = computed(() => feedItems.value.length > 6 ? [...feedItems.value, ...feedItems.value] : feedItems.value)
 const hotItems = computed(() => [...items.value].sort((a,b)=>b.interaction_count-a.interaction_count).slice(0,6))
 const maxInteraction = computed(() => Math.max(1, ...hotItems.value.map(item=>item.interaction_count)))
 const formatNumber = (value:number=0) => value >= 10000 ? `${(value/10000).toFixed(1)}万` : value.toLocaleString()
+const sentimentText: Record<string, string> = { positive: '正面', neutral: '中性', negative: '负面' }
+const riskText: Record<string, string> = { low: '低风险', medium: '中风险', high: '高风险' }
+const hasUsableSource = (url?: string) => Boolean(url && !url.includes('example.com'))
+const analysisStatusText = (item: SourceItem) => item.analysis_status === 'analyzed'
+  ? (item.current_analysis?.source === 'human' ? '人工已修正' : 'AI已研判')
+  : item.analysis_status === 'analyzing'
+    ? 'AI研判中'
+    : item.analysis_status === 'failed'
+      ? '研判异常'
+      : '等待AI研判'
+const analysisStatusHint = (item: SourceItem) => item.analysis_status === 'analyzed'
+  ? '该内容已形成研判结论。'
+  : item.analysis_status === 'analyzing'
+    ? 'AI正在读取正文、互动量和任务上下文，完成后会自动刷新。'
+    : item.analysis_status === 'failed'
+      ? (item.analysis_error || 'AI研判失败，请检查模型服务或稍后重试。')
+      : '新入库内容已进入待研判队列，启动AI分析后会自动生成情感、风险和依据。'
 const sentimentOption = computed(() => ({ tooltip:{trigger:'item'}, series:[{type:'pie', radius:['52%','76%'], label:{color:'#b8c9df', formatter:'{b}\n{d}%'}, data:[{name:'正面',value:stats.value.sentiments.positive||0,itemStyle:{color:'#20d5a4'}},{name:'中性',value:stats.value.sentiments.neutral||0,itemStyle:{color:'#39a9ff'}},{name:'负面',value:stats.value.sentiments.negative||0,itemStyle:{color:'#ff4d68'}}]}] }))
 const trendOption = computed(() => ({ grid:{left:45,right:20,top:30,bottom:35}, tooltip:{trigger:'axis'}, xAxis:{type:'category',data:stats.value.trend.map((x:any)=>x.date),axisLabel:{color:'#829cbc'},axisLine:{lineStyle:{color:'#244267'}}},yAxis:{type:'value',axisLabel:{color:'#829cbc'},splitLine:{lineStyle:{color:'#142b49'}}},series:[{type:'line',smooth:true,data:stats.value.trend.map((x:any)=>x.count),symbolSize:8,lineStyle:{color:'#22c7ff',width:3},itemStyle:{color:'#22c7ff'},areaStyle:{color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:'rgba(34,199,255,.35)'},{offset:1,color:'rgba(34,199,255,0)'}]}}}]}))
 const platformOption = computed(() => ({ grid:{left:80,right:20,top:10,bottom:20},xAxis:{type:'value',show:false},yAxis:{type:'category',data:Object.keys(stats.value.platforms),axisLabel:{color:'#9bb1d1'},axisLine:{show:false},axisTick:{show:false}},series:[{type:'bar',data:Object.values(stats.value.platforms),barWidth:12,itemStyle:{color:'#6c7cff',borderRadius:8},label:{show:true,position:'right',color:'#c8d8ee'}}]}))
@@ -69,7 +88,8 @@ const engagementOption = computed(() => ({
 const load = async () => {
   task.value=await getTask(id)
   stats.value=(await api.get(`/tasks/${id}/stats`)).data
-  items.value=(await getItems(id,50)).items
+  items.value=(await getCollectionFeed(id,50)).items
+  collectionStatus.value=await getCollectionStatus(id)
   const rows=(await api.get(`/tasks/${id}/strategies`)).data
   strategy.value=rows.find((value:any)=>value.generation_status==='completed')
   eligibility.value=(await api.get(`/tasks/${id}/strategies/eligibility`)).data
@@ -110,6 +130,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
       <div class="task-screen-head"><router-link to="/dashboard">← 任务总览</router-link><div><span :class="['status-dot',task.status]"></span>{{ task.status==='running'?'实时监测中':'任务已完结' }} · {{ task.platforms.join(' / ') }}</div><div class="screen-actions"><button @click="showTaskConfig=true">修改任务配置</button><button v-if="task.status==='running'" :disabled="busy==='complete'" @click="completeTask">完结任务</button><button v-else-if="reportStatus.state==='available'" :disabled="busy==='report'" @click="generateReport">{{ busy==='report'?'报告生成中…':'生成任务报告' }}</button><button v-else-if="reportStatus.state==='generating'" disabled>报告生成中…</button><button v-if="latestReport" @click="showReportDetail=true">查看任务报告</button><a v-if="latestReport" :href="`/api/tasks/${id}/reports/${latestReport.id}/pdf`">下载报告 PDF</a></div></div>
       <div v-if="message" class="screen-message">{{ message }}<button @click="message=''">×</button></div>
       <section class="metric-row compact task-metrics"><div class="metric-card cyan"><span>数据总量</span><strong>{{ stats.total }}</strong><small>MONITORED</small></div><div class="metric-card blue"><span>研判完成</span><strong>{{ stats.analyzed }}</strong><small>{{ stats.analysis_rate }}%</small></div><div class="metric-card red"><span>高风险</span><strong>{{ stats.risks.high || 0 }}</strong><small>HIGH RISK</small></div><div class="metric-card orange"><span>中风险</span><strong>{{ stats.risks.medium || 0 }}</strong><small>MEDIUM RISK</small></div><div class="metric-card green"><span>低风险</span><strong>{{ stats.risks.low || 0 }}</strong><small>LOW RISK</small></div><div class="metric-card cyan"><span>阅读/播放</span><strong>{{ formatNumber(stats.engagement.views) }}</strong><small>EXPOSURE</small></div><div class="metric-card violet"><span>互动总量</span><strong>{{ formatNumber(stats.engagement.interactions) }}</strong><small>ENGAGEMENT</small></div><div class="metric-card red"><span>负面占比</span><strong>{{ stats.analyzed ? ((stats.sentiments.negative || 0) / stats.analyzed * 100).toFixed(1) : 0 }}%</strong><small>NEGATIVE RATIO</small></div></section>
+      <section class="screen-live-strip"><header><span class="live-dot"></span><b>实时舆情流</b><small>{{ collectionScreenStateText }}</small></header><div><button v-for="item in feedItems.slice(0,8)" :key="item.id" @click="selected=item"><em>{{ item.platform }}</em><span>{{ item.title }}</span><strong>{{ item.analysis_status === 'analyzed' ? '已研判' : '等待AI研判' }}</strong></button><p v-if="!feedItems.length">等待持续监测采集首批内容</p></div></section>
       <section class="task-screen-grid">
         <div class="screen-panel"><header><span>情感倾向</span><small>SENTIMENT</small></header><ChartPanel :option="sentimentOption" /></div>
         <div class="screen-panel trend-panel"><header><span>舆情声量趋势</span><small>VOLUME TREND</small></header><ChartPanel :option="trendOption" /></div>
@@ -123,7 +144,45 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
         <div class="screen-panel hot-panel"><header><span>互动热度排行</span><small>ENGAGEMENT RANKING</small></header><div class="hot-list"><button v-for="(item,index) in hotItems" :key="item.id" @click="selected=item"><i>{{ String(index+1).padStart(2,'0') }}</i><span><b>{{ item.title }}</b><small>{{ item.platform }} · {{ formatNumber(item.view_count) }} 曝光</small></span><div><em :style="`width:${item.interaction_count/maxInteraction*100}%`"></em></div><strong>{{ formatNumber(item.interaction_count) }}</strong></button><p v-if="!hotItems.length">暂无互动数据</p></div></div>
       </section>
     </main>
-    <div v-if="selected" class="modal-mask dark" @click.self="selected=undefined"><article class="intel-detail"><button class="close" @click="selected=undefined">×</button><span class="eyebrow">INTELLIGENCE RECORD</span><h2>{{ selected.title }}</h2><div class="item-meta"><span>{{ selected.platform }}</span><span>{{ selected.author }}</span><span>{{ selected.publish_time ? new Date(selected.publish_time).toLocaleString() : '时间未知' }}</span></div><div class="engagement-metrics"><span><b>{{ selected.view_count.toLocaleString() }}</b><small>阅读/播放</small></span><span><b>{{ selected.like_count.toLocaleString() }}</b><small>点赞</small></span><span><b>{{ selected.comment_count.toLocaleString() }}</b><small>评论</small></span><span><b>{{ selected.share_count.toLocaleString() }}</b><small>转发/分享</small></span><span><b>{{ selected.interaction_count.toLocaleString() }}</b><small>互动总量</small></span></div><p>{{ selected.content }}</p><div class="analysis-summary" v-if="selected.current_analysis"><span :class="`sentiment ${selected.current_analysis.sentiment}`">{{ selected.current_analysis.sentiment }}</span><span :class="`risk ${selected.current_analysis.risk_level}`">{{ selected.current_analysis.risk_level }}</span><b>{{ selected.current_analysis.source==='human'?'人工修正':'AI研判' }}</b><p>{{ selected.current_analysis.reason }}</p></div><a v-if="selected.source_url" :href="selected.source_url" target="_blank">查看源数据 ↗</a></article></div>
+    <div v-if="selected" class="modal-mask dark" @click.self="selected=undefined">
+      <article class="intel-detail screen-intel-detail">
+        <button class="close" @click="selected=undefined">×</button>
+        <span class="eyebrow">情报详情</span>
+        <h2>{{ selected.title }}</h2>
+        <div class="item-meta">
+          <span>{{ selected.platform }}</span>
+          <span>{{ selected.author }}</span>
+          <span>{{ selected.publish_time ? new Date(selected.publish_time).toLocaleString() : '时间未知' }}</span>
+          <a v-if="hasUsableSource(selected.source_url)" :href="selected.source_url" target="_blank">打开原文</a>
+        </div>
+        <div class="engagement-metrics">
+          <span><b>{{ selected.view_count.toLocaleString() }}</b><small>阅读/播放</small></span>
+          <span><b>{{ selected.like_count.toLocaleString() }}</b><small>点赞</small></span>
+          <span><b>{{ selected.comment_count.toLocaleString() }}</b><small>评论</small></span>
+          <span><b>{{ selected.share_count.toLocaleString() }}</b><small>转发/分享</small></span>
+          <span><b>{{ selected.interaction_count.toLocaleString() }}</b><small>互动总量</small></span>
+        </div>
+        <p>{{ selected.content }}</p>
+        <div class="analysis-summary screen-analysis-summary" :class="selected.analysis_status">
+          <header>
+            <span>研判状态</span>
+            <b>{{ analysisStatusText(selected) }}</b>
+          </header>
+          <template v-if="selected.current_analysis">
+            <div class="analysis-badges">
+              <span :class="`sentiment ${selected.current_analysis.sentiment}`">{{ sentimentText[selected.current_analysis.sentiment] }}</span>
+              <span :class="`risk ${selected.current_analysis.risk_level}`">{{ riskText[selected.current_analysis.risk_level] }}</span>
+              <em>{{ selected.current_analysis.source==='human'?'人工修正':'AI研判' }}</em>
+            </div>
+            <p>{{ selected.current_analysis.reason }}</p>
+            <div v-if="selected.current_analysis.topics.length" class="analysis-topics dark-topics">
+              <span v-for="topic in selected.current_analysis.topics" :key="topic">{{ topic }}</span>
+            </div>
+          </template>
+          <p v-else>{{ analysisStatusHint(selected) }}</p>
+        </div>
+      </article>
+    </div>
     <div v-if="showStrategyDetail && strategy" class="modal-mask dark" @click.self="showStrategyDetail=false"><article class="intel-detail strategy-detail-modal"><button class="close" @click="showStrategyDetail=false">×</button><span class="eyebrow">RESPONSE STRATEGY</span><h2>完整应对策略 V{{ strategy.version_no }}</h2><div class="strategy-detail-meta"><span>依据 {{ strategy.analyzed_count }} 条已研判数据</span><b>{{ strategy.is_manually_edited?'AI生成 · 人工已审核':'AI智能生成' }}</b><time>{{ new Date(strategy.created_at).toLocaleString() }}</time></div><pre class="strategy-full-content">{{ strategy.content }}</pre></article></div>
     <div v-if="showReportDetail && latestReport" class="modal-mask dark" @click.self="showReportDetail=false"><article class="intel-detail strategy-detail-modal"><button class="close" @click="showReportDetail=false">×</button><span class="eyebrow">ARCHIVE REPORT</span><h2>任务报告 V{{ latestReport.version_no }}</h2><div class="strategy-detail-meta"><span>{{ task.name }}</span><b>{{ latestReport.is_manually_edited?'AI生成 · 人工已审核':'AI智能生成' }}</b><time>{{ new Date(latestReport.created_at).toLocaleString() }}</time></div><pre class="strategy-full-content">{{ latestReport.content }}</pre></article></div>
     <TaskConfigModal v-if="showTaskConfig" :task="task" @close="showTaskConfig=false" @saved="showTaskConfig=false; load()" />

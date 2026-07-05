@@ -4,16 +4,26 @@ import { api, type Task } from '../api'
 
 const props = defineProps<{ task?: Task }>()
 const emit = defineEmits<{ close: []; saved: [task: Task] }>()
-const platforms = ['微博', '小红书', '快手', '抖音', '微信公众号']
+const platforms = ['微博', '快手', 'bilibili', '小红书', '抖音', '微信公众号']
+const platformHints: Record<string, string> = {
+  微博: '支持持续监测',
+  快手: '支持持续监测',
+  bilibili: '支持持续监测',
+  小红书: '即将接入',
+  抖音: '即将接入',
+  微信公众号: 'Excel导入',
+}
 const saving = ref(false)
 const error = ref('')
 const form = reactive({
   name: props.task?.name || '',
   keywords: props.task?.keywords.join('，') || '',
-  platforms: [...(props.task?.platforms || ['微博', '小红书'])],
+  platforms: [...(props.task?.platforms || ['微博', '快手'])],
   start_time: props.task?.start_time?.slice(0, 16) || '',
   end_time: props.task?.end_time?.slice(0, 16) || '',
   description: props.task?.description || '',
+  collection_enabled: props.task?.collection_enabled ?? true,
+  collection_interval_seconds: props.task?.collection_interval_seconds || 300,
 })
 
 const submit = async () => {
@@ -24,6 +34,8 @@ const submit = async () => {
       keywords: form.keywords.split(/[,，\s]+/).filter(Boolean),
       start_time: form.start_time || null,
       end_time: form.end_time || null,
+      collection_enabled: form.collection_enabled,
+      collection_interval_seconds: Number(form.collection_interval_seconds) || 300,
     }
     const response = props.task
       ? await api.patch<Task>(`/tasks/${props.task.id}`, payload)
@@ -40,7 +52,9 @@ const submit = async () => {
       <div class="modal-head"><div><span class="eyebrow">TASK CONFIGURATION</span><h2>{{ task ? '修改任务配置' : '创建任务' }}</h2></div><button type="button" class="close" @click="emit('close')">×</button></div>
       <label>任务名称<input v-model="form.name" required placeholder="例如：校园食品安全舆情监测"></label>
       <label>数据采集关键词<input v-model="form.keywords" required placeholder="多个关键词用逗号分隔"></label>
-      <label>数据采集平台<div class="checks"><span v-for="p in platforms" :key="p"><input v-model="form.platforms" type="checkbox" :value="p">{{ p }}</span></div></label>
+      <label>监测平台<div class="checks platform-checks"><span v-for="p in platforms" :key="p"><input v-model="form.platforms" type="checkbox" :value="p"><b>{{ p }}</b><small>{{ platformHints[p] }}</small></span></div></label>
+      <label class="switch-line"><input v-model="form.collection_enabled" type="checkbox">持续监测<small>任务运行期间按关键词和平台持续采集新增内容</small></label>
+      <label v-if="form.collection_enabled">采集频率<select v-model="form.collection_interval_seconds"><option :value="180">每 3 分钟</option><option :value="300">每 5 分钟</option><option :value="600">每 10 分钟</option><option :value="1800">每 30 分钟</option></select></label>
       <div class="form-row"><label>采集开始时间<input v-model="form.start_time" type="datetime-local"></label><label>采集结束时间<input v-model="form.end_time" type="datetime-local"></label></div>
       <label>任务说明<textarea v-model="form.description" rows="3" placeholder="可选"></textarea></label>
       <p v-if="error" class="error">{{ error }}</p>
@@ -48,4 +62,3 @@ const submit = async () => {
     </form>
   </div>
 </template>
-
