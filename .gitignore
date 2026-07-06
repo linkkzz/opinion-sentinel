@@ -22,4 +22,3 @@ storage/tasks/*
 # 采集相关
 backend/browser_data/
 backend/opinion_sentinel.db
-backend/app/collection/libs/stealth.min.js

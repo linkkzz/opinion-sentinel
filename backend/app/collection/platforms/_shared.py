@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import os
 import random
 import time
 from datetime import datetime, timedelta, timezone
@@ -173,7 +172,7 @@ def parse_flexible_timestamp(value) -> Optional[datetime]:
 #  goto+update_cookies 432 恢复机制。
 # ---------------------------------------------------------------------------
 
-# stealth.js 路径（复制，注入反自动化检测）
+# stealth.js 路径（反自动化检测脚本，注入到浏览器 context）
 _STEALTH_JS_PATH = Path(__file__).resolve().parent.parent / "libs" / "stealth.min.js"
 
 
@@ -184,7 +183,6 @@ async def update_cookies_from_context(
 ) -> None:
     """从 playwright BrowserContext 提取最新 Cookie，写回 httpx client headers。
 
-    update_cookies。
     浏览器 goto 后会吸收 server 轮换的 Set-Cookie（如 weibo _T_WM/SUB），此处同步到 httpx。
     """
     cookie_str, cookie_dict = convert_cookies(
@@ -198,7 +196,7 @@ async def update_cookies_from_context(
 async def launch_collection_browser(playwright, *, headless: bool = True):
     """启动采集用 headless 浏览器 + 注入 stealth.js。
 
-    复刻  标准模式：launch(channel="chrome") + new_context + add_init_script(stealth.js)。
+    launch(channel="chrome") + new_context + add_init_script(stealth.js)。
     用 launch()+new_context() 而非 launch_persistent_context()，避免 user_data_dir 残留登录态。
 
     :return: (browser, context, page)
@@ -213,26 +211,8 @@ async def launch_collection_browser(playwright, *, headless: bool = True):
         viewport={"width": 1920, "height": 1080},
         user_agent=get_pc_user_agent(),
     )
-    # 注入 stealth.js 抹掉 webdriver/自动化指纹（复刻 weibo/core.py:93）
-    # 若文件不存在（如 git clone 后未复制），尝试自动复制
-    _ensure_stealth_js()
+    # 注入 stealth.js 抹掉 webdriver/自动化指纹
     if _STEALTH_JS_PATH.exists():
         await context.add_init_script(path=str(_STEALTH_JS_PATH))
     page = await context.new_page()
     return browser, context, page
-
-
-def _ensure_stealth_js() -> None:
-    """stealth.js 不存在时尝试从  复制（部署环境需手动放置）。"""
-    if _STEALTH_JS_PATH.exists():
-        return
-    # 尝试常见路径
-    candidates = [
-        Path(os.environ.get("STEALTH_JS_PATH", "")),
-        Path("/app/libs/stealth.min.js"),  # Docker
-    ]
-    for src in candidates:
-        if src.exists():
-            _STEALTH_JS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            _STEALTH_JS_PATH.write_bytes(src.read_bytes())
-            return
